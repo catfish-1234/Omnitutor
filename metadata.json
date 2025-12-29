@@ -1,0 +1,5 @@
+{
+  "name": "Omnitutor",
+  "description": "A smart AI tutoring application specializing in Math and Science, featuring LaTeX rendering and cloud-synced chat history via Firebase.",
+  "requestFramePermissions": []
+}
