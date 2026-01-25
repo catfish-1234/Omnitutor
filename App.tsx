@@ -2,7 +2,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { Subject, Role } from './types';
 import { useFirestore } from './hooks/useFirestore';
-import { useGemini } from './hooks/useGemini';
+import { useAI } from './hooks/useAI';
 import { ChatBubble } from './components/ChatBubble';
 import { SubjectSelector } from './components/SubjectSelector';
 import { SettingsModal } from './components/SettingsModal';
@@ -18,7 +18,7 @@ function App() {
 
   // Custom Hooks
   const { messages, addMessage, loadingHistory, userId, createNewChat } = useFirestore(activeSubject);
-  const { sendMessage, isLoading: isThinking } = useGemini();
+  const { sendMessage, isLoading: isThinking, statusMessage } = useAI();
 
   // Auth Listener
   useEffect(() => {
@@ -208,10 +208,10 @@ function App() {
       </aside >
 
       {/* Main Content Area */}
-      < main className="flex-1 flex flex-col h-full relative w-full bg-background-light dark:bg-slate-900" >
+      <main className="flex-1 flex flex-col h-full relative w-full bg-background-light dark:bg-slate-900 overflow-hidden">
 
         {/* Mobile Header */}
-        < header className="md:hidden flex items-center justify-between px-4 py-3 border-b border-slate-700 bg-sidebar z-20 text-white" >
+        <header className="md:hidden flex items-center justify-between px-4 py-3 border-b border-slate-700 bg-sidebar z-20 text-white shrink-0">
           <div className="flex items-center gap-2">
             <img alt="OmniTutor Logo" className="h-8 w-auto" src="/logo.png" />
             <span className="font-bold text-lg">OmniTutor</span>
@@ -219,11 +219,11 @@ function App() {
           <button className="text-slate-300 hover:text-white">
             <span className="material-symbols-outlined">menu</span>
           </button>
-        </header >
+        </header>
 
-        {/* Chat List */}
-        < div className="flex-1 overflow-y-auto scroll-smooth w-full" >
-          <div className="max-w-3xl mx-auto px-4 py-8 flex flex-col gap-6 pb-40">
+        {/* Chat List - Takes available space */}
+        <div className="flex-1 overflow-y-auto scroll-smooth w-full p-4">
+          <div className="max-w-3xl mx-auto flex flex-col gap-6">
             <div className="flex justify-center">
               <span className="text-xs font-medium text-slate-400 dark:text-slate-500 bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 px-3 py-1 rounded-full shadow-sm">
                 Today
@@ -249,27 +249,34 @@ function App() {
             )}
 
             {/* Thinking Indicator */}
-            {isThinking && (
+            {(isThinking || statusMessage) && (
               <div className="flex justify-start gap-4 animate-pulse">
                 <div className="shrink-0 mt-1">
                   <img alt="AI Avatar" className="size-8 object-contain" src="/logo.png" />
                 </div>
                 <div className="bg-surface-light dark:bg-surface-dark px-6 py-4 rounded-2xl rounded-tl-sm shadow-sm border border-slate-200">
-                  <div className="flex gap-1">
-                    <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce"></span>
-                    <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce delay-100"></span>
-                    <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce delay-200"></span>
-                  </div>
+                  {statusMessage ? (
+                    <div className="flex gap-2 items-center text-amber-600 dark:text-amber-400 font-medium text-sm">
+                      <span className="material-symbols-outlined text-[18px] animate-spin">refresh</span>
+                      <span>{statusMessage}</span>
+                    </div>
+                  ) : (
+                    <div className="flex gap-1">
+                      <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce"></span>
+                      <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce delay-100"></span>
+                      <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce delay-200"></span>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
 
             <div ref={bottomRef} />
           </div>
-        </div >
+        </div>
 
-        {/* Input Area (Fixed Bottom) */}
-        < div className="absolute bottom-0 left-0 right-0 bg-background-light dark:bg-slate-900 bg-opacity-95 backdrop-blur-sm border-t border-slate-200 dark:border-slate-800 px-4 py-4 md:py-6 z-10 w-full" >
+        {/* Input Area - Fixed at bottom via flex layout */}
+        <div className="w-full bg-background-light dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 px-4 py-4 md:py-6 shrink-0 bg-opacity-95 backdrop-blur-sm z-10">
           <div className="max-w-3xl mx-auto w-full">
             <div className="bg-surface-light dark:bg-surface-dark border border-slate-300 dark:border-slate-600 rounded-2xl shadow-lg focus-within:ring-2 focus-within:ring-primary/20 focus-within:border-primary transition-all duration-200 flex flex-col sm:flex-row overflow-visible">
 
@@ -318,8 +325,8 @@ function App() {
               OmniTutor can make mistakes. Consider checking important information.
             </p>
           </div>
-        </div >
-      </main >
+        </div>
+      </main>
     </div >
   );
 }

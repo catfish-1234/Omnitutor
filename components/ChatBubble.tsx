@@ -32,7 +32,7 @@ export const ChatBubble: React.FC<ChatBubbleProps> = ({ message }) => {
       <div className="flex flex-col max-w-[90%] sm:max-w-[85%]">
         <div className="bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700 px-6 py-5 rounded-2xl rounded-tl-sm shadow-sm space-y-4">
           <div className="text-slate-800 dark:text-slate-200 text-[15px] sm:text-base leading-7">
-            <MarkdownRenderer content={message.content} />
+            <MarkdownRenderer content={message.content || ''} />
           </div>
           <div className="flex items-center gap-2 mt-2 ml-1 border-t border-slate-100 dark:border-slate-800 pt-3">
             <button className="p-1 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">

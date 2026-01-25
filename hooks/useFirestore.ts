@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { db, collection, addDoc, query, orderBy, onSnapshot, ensureUser, serverTimestamp, auth, onAuthStateChanged } from '../firebase';
+import { db, collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, auth, onAuthStateChanged } from '../firebase';
 import { Message, Role, Subject } from '../types';
 
 export const useFirestore = (subject: Subject) => {
@@ -45,11 +45,17 @@ export const useFirestore = (subject: Subject) => {
 
     const messagesRef = collection(db, `users/${userId}/chats/${subject}/messages`);
 
-    await addDoc(messagesRef, {
-      role,
-      content: text,
-      timestamp: serverTimestamp()
-    });
+    try {
+      await addDoc(messagesRef, {
+        role,
+        content: text,
+        timestamp: serverTimestamp()
+      });
+    } catch (dbError) {
+      console.error("Firestore Write Error:", dbError);
+      // Depending on requirements, we might want to rethrow or handle specific cases
+      // For now, logging is the priority request.
+    }
   }, [userId, subject]);
 
   const createNewChat = useCallback(async () => {
