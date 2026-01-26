@@ -1,8 +1,9 @@
 
 import { useState, useRef, useEffect } from 'react';
-import { Subject, Role } from './types';
-import { useFirestore } from './hooks/useFirestore';
+import { Subject, Role, Attachment } from './types';
+import { useFirestore, useChatList } from './hooks/useFirestore';
 import { useAI } from './hooks/useAI';
+import { useVoice } from './hooks/useVoice';
 import { ChatBubble } from './components/ChatBubble';
 import { SubjectSelector } from './components/SubjectSelector';
 import { SettingsModal } from './components/SettingsModal';
@@ -13,12 +14,36 @@ function App() {
   const [input, setInput] = useState('');
   const [user, setUser] = useState<any>(auth.currentUser);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [attachment, setAttachment] = useState<Attachment | undefined>(undefined);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [enterToSend, setEnterToSend] = useState(localStorage.getItem('enterToSend') !== 'false');
+
+  const [sessionPrompts, setSessionPrompts] = useState<string[]>([]);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  // Listen for storage changes (SettingsModal updates)
+  useEffect(() => {
+    const handleStorage = () => {
+      setEnterToSend(localStorage.getItem('enterToSend') !== 'false');
+    };
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, []);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   // Custom Hooks
   const { messages, addMessage, loadingHistory, userId, createNewChat } = useFirestore(activeSubject);
+  const { sessions: chatSessions, loading: loadingSessions } = useChatList();
   const { sendMessage, isLoading: isThinking, statusMessage } = useAI();
+  const { isListening, transcript, startListening, stopListening, resetTranscript } = useVoice();
+
+  // Sync Voice Transcript to Input
+  useEffect(() => {
+    if (transcript) {
+      setInput(prev => prev + transcript);
+      resetTranscript();
+    }
+  }, [transcript, resetTranscript]);
 
   // Auth Listener
   useEffect(() => {
@@ -55,14 +80,66 @@ function App() {
     }
   };
 
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const handleAttachment = () => {
-    // Stub for future implementation
-    alert("File attachments are coming soon!");
+    fileInputRef.current?.click();
+  };
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      const fileType = file.type;
+      const fileName = file.name;
+
+      // Subject Restrictions
+      if (activeSubject === Subject.CODING) {
+        const allowedExtensions = ['.py', '.js', '.html', '.css', '.ts', '.json'];
+        const isAllowed = allowedExtensions.some(ext => fileName.toLowerCase().endsWith(ext));
+
+        if (isAllowed) {
+          const textInfo = await file.text();
+          setAttachment({
+            content: textInfo,
+            type: 'text',
+            fileName: fileName,
+            mimeType: fileType
+          });
+          return;
+        }
+      }
+
+      if ([Subject.MATH, Subject.PHYSICS, Subject.CHEMISTRY, Subject.BIOLOGY].includes(activeSubject)) {
+        // Allow images
+        if (fileType.startsWith('image/')) {
+          const reader = new FileReader();
+          reader.onload = (event) => {
+            if (event.target?.result) {
+              setAttachment({
+                content: event.target.result as string,
+                type: 'image',
+                fileName: fileName,
+                mimeType: fileType
+              });
+            }
+          };
+          reader.readAsDataURL(file);
+          return;
+        }
+      }
+
+      // Default/Fallback Logic or Error
+      alert(`File type not supported for ${activeSubject}. \nCoding: .py, .js, .html\nScience/Math: Images`);
+      e.target.value = ''; // Reset input
+    }
   };
 
   const handleVoice = () => {
-    // Stub for future implementation
-    alert("Voice input is coming soon!");
+    if (isListening) {
+      stopListening();
+    } else {
+      startListening();
+    }
   };
 
   const handleNewChat = () => {
@@ -92,11 +169,20 @@ function App() {
     setInput(''); // Clear immediately
 
     // 1. Optimistic Update / Persistence
-    await addMessage(userText, Role.USER);
+    await addMessage(userText, Role.USER, attachment);
 
     // 2. Call Gemini
     try {
-      const response = await sendMessage(userText, activeSubject, messages);
+      // Add to session prompts if not exists
+      if (!sessionPrompts.includes(userText)) {
+        setSessionPrompts(prev => [...prev, userText]);
+      }
+
+      const response = await sendMessage(userText, activeSubject, messages, attachment);
+
+      // Clear attachment after send
+      setAttachment(undefined);
+      if (fileInputRef.current) fileInputRef.current.value = '';
 
       // 3. Persist Response
       await addMessage(response, Role.MODEL);
@@ -108,19 +194,33 @@ function App() {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSubmit();
+    if (enterToSend) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        handleSubmit();
+      }
+    } else {
+      if (e.key === 'Enter' && e.ctrlKey) {
+        e.preventDefault();
+        handleSubmit();
+      }
     }
   };
+
+
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-background-light dark:bg-background-dark text-slate-900 dark:text-slate-100 font-display">
 
       <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} user={user} />
 
+      {/* Mobile Sidebar Overlay */}
+      {isMobileMenuOpen && (
+        <div className="fixed inset-0 bg-black/50 z-30 md:hidden" onClick={() => setIsMobileMenuOpen(false)} />
+      )}
+
       {/* Sidebar */}
-      <aside className="hidden md:flex w-72 flex-col border-r border-slate-700/50 bg-sidebar flex-shrink-0 transition-colors duration-200">
+      <aside className={`fixed inset-y-0 left-0 z-40 w-72 flex-col border-r border-slate-700/50 bg-sidebar transition-transform duration-300 md:translate-x-0 md:static md:flex ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="p-5 flex items-center gap-3">
           <img alt="OmniTutor Logo" className="h-10 w-auto" src="/logo.png" />
           <h1 className="text-xl font-bold tracking-tight text-white">OmniTutor</h1>
@@ -133,20 +233,29 @@ function App() {
         </div>
         <div className="flex-1 overflow-y-auto px-3 py-2 space-y-6">
           <div>
-            <h3 className="px-3 text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Today</h3>
+            <h3 className="px-3 text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">My Chats</h3>
             <div className="flex flex-col gap-1">
-              <button className="flex items-center gap-3 w-full px-3 py-2 rounded-lg bg-primary/20 text-indigo-200 font-medium text-sm transition-colors text-left group border border-primary/30">
-                <span className="material-symbols-outlined text-[20px] text-indigo-300">
-                  {activeSubject === Subject.MATH ? 'calculate' :
-                    activeSubject === Subject.PHYSICS ? 'science' :
-                      activeSubject === Subject.CHEMISTRY ? 'biotech' :
-                        activeSubject === Subject.BIOLOGY ? 'eco' :
-                          activeSubject === Subject.HISTORY ? 'history_edu' :
-                            activeSubject === Subject.LITERATURE ? 'book_2' :
-                              activeSubject === Subject.CODING ? 'code' : 'school'}
-                </span>
-                <span className="truncate">Active Session: {activeSubject}</span>
-              </button>
+              {loadingSessions ? (
+                <div className="text-slate-500 text-xs px-3">Loading...</div>
+              ) : chatSessions.length === 0 ? (
+                <div className="text-slate-500 text-xs px-3">No chats yet.</div>
+              ) : (
+                chatSessions.map(session => (
+                  <button
+                    key={session.id}
+                    onClick={() => setActiveSubject(session.subject)}
+                    className={`flex items-center gap-3 w-full px-3 py-2 rounded-lg font-medium text-sm transition-colors text-left group border ${activeSubject === session.subject ? 'bg-primary/20 text-indigo-200 border-primary/30' : 'text-slate-300 hover:bg-slate-800 border-transparent'}`}
+                  >
+                    <span className={`material-symbols-outlined text-[20px] ${activeSubject === session.subject ? 'text-indigo-300' : 'text-slate-500'}`}>
+                      {session.subject === Subject.MATH ? 'calculate' :
+                        session.subject === Subject.PHYSICS ? 'science' :
+                          session.subject === Subject.CHEMISTRY ? 'biotech' :
+                            session.subject === Subject.CODING ? 'code' : 'school'}
+                    </span>
+                    <span className="truncate">{session.subject}</span>
+                  </button>
+                ))
+              )}
             </div>
           </div>
           <div>
@@ -216,7 +325,7 @@ function App() {
             <img alt="OmniTutor Logo" className="h-8 w-auto" src="/logo.png" />
             <span className="font-bold text-lg">OmniTutor</span>
           </div>
-          <button className="text-slate-300 hover:text-white">
+          <button className="text-slate-300 hover:text-white" onClick={() => setIsMobileMenuOpen(true)}>
             <span className="material-symbols-outlined">menu</span>
           </button>
         </header>
@@ -278,7 +387,23 @@ function App() {
         {/* Input Area - Fixed at bottom via flex layout */}
         <div className="w-full bg-background-light dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 px-4 py-4 md:py-6 shrink-0 bg-opacity-95 backdrop-blur-sm z-10">
           <div className="max-w-3xl mx-auto w-full">
-            <div className="bg-surface-light dark:bg-surface-dark border border-slate-300 dark:border-slate-600 rounded-2xl shadow-lg focus-within:ring-2 focus-within:ring-primary/20 focus-within:border-primary transition-all duration-200 flex flex-col sm:flex-row overflow-visible">
+            <div className="bg-surface-light dark:bg-surface-dark border border-slate-300 dark:border-slate-600 rounded-2xl shadow-lg focus-within:ring-2 focus-within:ring-primary/20 focus-within:border-primary transition-all duration-200 flex flex-col sm:flex-row overflow-visible relative">
+
+              {/* Prompt History Bubbles (Gemini Style) */}
+              {sessionPrompts.length > 0 && (
+                <div className="absolute top-[-36px] right-0 flex justify-end gap-2 overflow-x-auto max-w-full pb-2 no-scrollbar px-1">
+                  {sessionPrompts.slice(-3).map((p, i) => (
+                    <button
+                      key={i}
+                      onClick={() => setInput(p)}
+                      className="bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-xs px-3 py-1.5 rounded-full border border-slate-200 dark:border-slate-700 shadow-sm hover:bg-slate-50 dark:hover:bg-slate-700 whitespace-nowrap max-w-[150px] truncate transition-colors opacity-0 animate-fade-in-up"
+                      style={{ animationDelay: `${i * 100}ms` }}
+                    >
+                      {p}
+                    </button>
+                  ))}
+                </div>
+              )}
 
               {/* Custom Subject Selector (Pill Style) */}
               <SubjectSelector activeSubject={activeSubject} onSelect={setActiveSubject} />
@@ -294,10 +419,62 @@ function App() {
                   placeholder="Ask a question..."
                   rows={1}
                 ></textarea>
+
+                {/* Attachment Indicator */}
+                {attachment && (
+                  <div className="absolute top-[-40px] left-0 bg-white dark:bg-slate-800 p-2 rounded shadow flex items-center gap-2 text-xs border border-slate-200 dark:border-slate-700">
+                    <span className="material-symbols-outlined text-[16px] text-primary">
+                      {attachment.type === 'image' ? 'image' : 'description'}
+                    </span>
+                    <span className="truncate max-w-[150px]">{attachment.fileName}</span>
+                    <button onClick={() => { setAttachment(undefined); if (fileInputRef.current) fileInputRef.current.value = ''; }} className="hover:text-red-500">
+                      <span className="material-symbols-outlined text-[16px]">close</span>
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Action Buttons */}
-              <div className="flex items-center gap-2 px-3 py-2 sm:py-0 border-t sm:border-t-0 border-slate-100 dark:border-slate-700/50 justify-between sm:justify-start bg-slate-50 dark:bg-slate-800/50 sm:bg-transparent">
+              <div className="flex items-center gap-2 px-3 py-2 sm:py-0 border-t sm:border-t-0 border-slate-100 dark:border-slate-700/50 justify-between sm:justify-start bg-slate-50 dark:bg-slate-800/50 sm:bg-transparent relative">
+
+                {/* Tools Menu */}
+                <div className="relative group">
+                  <button className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700/50 rounded-full transition-colors" title="AI Tools">
+                    <span className="material-symbols-outlined text-[20px]">handyman</span>
+                  </button>
+                  {/* Hover Dropdown */}
+                  <div className="absolute bottom-full left-0 mb-2 w-48 bg-white dark:bg-slate-800 rounded-xl shadow-xl border border-slate-200 dark:border-slate-700 invisible group-hover:visible opacity-0 group-hover:opacity-100 transition-all transform origin-bottom-left z-50 overflow-hidden flex flex-col">
+                    <button
+                      onClick={() => {
+                        if (messages.length === 0) {
+                          alert("Start a conversation first before generating a quiz.");
+                          return;
+                        }
+                        setInput("Create a 5-question multiple choice quiz based on our conversation so far.");
+                        if (textareaRef.current) textareaRef.current.focus();
+                      }}
+                      className="px-4 py-3 text-left hover:bg-slate-50 dark:hover:bg-slate-700/50 text-slate-700 dark:text-slate-200 text-sm font-medium flex items-center gap-2"
+                    >
+                      <span className="material-symbols-outlined text-[18px] text-indigo-500">quiz</span>
+                      Generate Quiz
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (messages.length === 0) {
+                          alert("Start a conversation first before creating flashcards.");
+                          return;
+                        }
+                        setInput("Summarize the key concepts of this chat into a Markdown table with 'Front' and 'Back' columns for flashcards.");
+                        if (textareaRef.current) textareaRef.current.focus();
+                      }}
+                      className="px-4 py-3 text-left hover:bg-slate-50 dark:hover:bg-slate-700/50 text-slate-700 dark:text-slate-200 text-sm font-medium flex items-center gap-2 border-t border-slate-100 dark:border-slate-700"
+                    >
+                      <span className="material-symbols-outlined text-[18px] text-emerald-500">style</span>
+                      Make Flashcards
+                    </button>
+                  </div>
+                </div>
+
                 <button
                   onClick={handleAttachment}
                   className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700/50 rounded-full transition-colors tooltip-trigger"
@@ -307,10 +484,10 @@ function App() {
                 </button>
                 <button
                   onClick={handleVoice}
-                  className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700/50 rounded-full transition-colors hidden sm:block"
-                  title="Voice Input"
+                  className={`p-2 rounded-full transition-colors hidden sm:block ${isListening ? 'text-red-500 bg-red-100 animate-pulse' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700/50'}`}
+                  title={isListening ? "Stop Listening" : "Voice Input"}
                 >
-                  <span className="material-symbols-outlined text-[20px]">mic</span>
+                  <span className="material-symbols-outlined text-[20px]">{isListening ? 'mic_off' : 'mic'}</span>
                 </button>
                 <button
                   onClick={() => handleSubmit()}
@@ -321,12 +498,14 @@ function App() {
                 </button>
               </div>
             </div>
-            <p className="text-center text-xs text-slate-400 dark:text-slate-500 mt-2">
-              OmniTutor can make mistakes. Consider checking important information.
-            </p>
+            <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileSelect} />
           </div>
+          <p className="text-center text-xs text-slate-400 dark:text-slate-500 mt-2">
+            OmniTutor can make mistakes. Consider checking important information.
+          </p>
         </div>
-      </main>
+
+      </main >
     </div >
   );
 }

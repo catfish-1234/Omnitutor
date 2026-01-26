@@ -15,6 +15,14 @@ export interface Message {
   content: string;
   timestamp: Date | Timestamp;
   isStreaming?: boolean;
+  attachment?: Attachment;
+}
+
+export interface Attachment {
+  content: string; // Base64 or text content
+  type: 'image' | 'text';
+  mimeType?: string;
+  fileName?: string;
 }
 
 export interface ChatSession {
